@@ -8,6 +8,6 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RULE="50-datameter-vnstat.rules"
 DEST="/usr/share/polkit-1/rules.d/$RULE"
 
-echo "Installing $RULE -> $DEST (needs sudo once)"
+echo "正在安装 $RULE -> $DEST（需要 sudo 权限）"
 sudo install -m 0644 "$HERE/$RULE" "$DEST"
-echo "Done. Test with:  systemctl stop vnstat && systemctl start vnstat"
+echo "安装完成。可用以下命令测试：systemctl stop vnstat && systemctl start vnstat"

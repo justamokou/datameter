@@ -18,6 +18,8 @@ import select
 import sys
 import time
 
+from datameter import char_width
+
 
 def replay(raw: str, cols: int, rows: int) -> str:
     # Prefer pyte (a real terminal emulator) when available for faithful output.
@@ -36,9 +38,23 @@ def replay(raw: str, cols: int, rows: int) -> str:
 
     def put(ch):
         nonlocal r, c
-        if 0 <= r < rows and 0 <= c < cols:
-            grid[r][c] = ch
-        c += 1
+        width = char_width(ch)
+        if 0 <= r < rows:
+            if width == 0:
+                previous = min(c - 1, cols - 1)
+                while previous >= 0 and grid[r][previous] == "":
+                    previous -= 1
+                if previous >= 0:
+                    grid[r][previous] += ch
+            elif 0 <= c and c + width <= cols:
+                # Empty continuation cells preserve the display width when joined.
+                if c > 0 and grid[r][c] == "":
+                    grid[r][c - 1] = " "
+                for x in range(c, c + width):
+                    if x + 1 < cols and grid[r][x + 1] == "":
+                        grid[r][x + 1] = " "
+                    grid[r][x] = ch if x == c else ""
+        c += width
 
     while i < len(raw):
         ch = raw[i]

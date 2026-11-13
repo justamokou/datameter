@@ -1,5 +1,5 @@
 [Unit]
-Description=datameter alert check
+Description=datameter 用量提醒检查
 
 [Service]
 Type=oneshot

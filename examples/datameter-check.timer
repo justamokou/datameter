@@ -1,5 +1,5 @@
 [Unit]
-Description=Run datameter alert check every 10 minutes
+Description=每 10 分钟检查一次 datameter 用量提醒
 
 [Timer]
 OnBootSec=2min
