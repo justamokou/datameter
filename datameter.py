@@ -27,6 +27,7 @@ import locale
 import math
 import os
 import shutil
+import sqlite3
 import struct
 import subprocess
 import sys
@@ -37,11 +38,15 @@ import wave
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+from history_view import HistoryView
+from traffic_history import HistoryStore, LiveRates, format_rate, parse_anchor
+
 APP = "datameter"
 HERE = Path(__file__).resolve().parent
 CONFIG_PATH = Path(os.environ.get("DATAMETER_CONFIG") or (HERE / "config.json"))
 STATE_PATH = Path(os.environ.get("DATAMETER_STATE") or (HERE / ".alert-state.json"))
 SOUND_PATH = HERE / "tock.wav"
+HISTORY_PATH = Path(os.environ.get("DATAMETER_HISTORY") or (HERE / "history.sqlite3"))
 
 DEFAULT_CONFIG = {
     "interface": "wlp4s0",
@@ -222,13 +227,19 @@ def default_interface(fallback: str = "wlp4s0") -> str:
 
 
 def vnstat_snapshot(iface: str) -> dict:
-    cp = run(["vnstat", "--json", "-i", iface])
+    # Explicitly request all retained entries rather than vnstat's list limits.
+    cp = run(["vnstat", "--json", "a", "0", "-i", iface])
     if cp.returncode != 0:
         raise RuntimeError(cp.stderr.strip() or "vnstat 执行失败")
     j = json.loads(cp.stdout)
     for i in j.get("interfaces", []):
         if i["name"] == iface:
-            return i["traffic"]
+            traffic = dict(i["traffic"], _updated=i.get("updated", {}), _created=i.get("created", {}))
+            try:
+                HistoryStore(HISTORY_PATH).ingest(iface, traffic)
+            except (OSError, sqlite3.Error) as exc:
+                traffic["_history_error"] = f"历史归档写入失败：{exc}"
+            return traffic
     raise RuntimeError(f"vnstat 数据库中没有网卡 {iface!r}")
 
 
@@ -321,6 +332,8 @@ def compute_stats(iface: str, cfg: dict) -> dict:
         "day_values": day_values,
         "day_labels": day_labels,
         "total": int(t.get("total", {}).get("rx", 0)) + int(t.get("total", {}).get("tx", 0)),
+        "traffic": t,
+        "interface": iface,
     }
 
 
@@ -528,6 +541,10 @@ class App:
         self.wiz_steps: list = []
         self.wiz_step = 0
         self.wiz_buf = ""
+        self.live_rates = LiveRates()
+        self.last_live_poll = 0.0
+        self.history = HistoryView(self, HISTORY_PATH, fmt_bytes, pad_text,
+                                   (C_ACCENT, C_OK, C_WARN))
 
     # -- data ------------------------------------------------------------- #
 
@@ -540,6 +557,10 @@ class App:
                 self.alerts = (new + self.alerts)[:4]
         except Exception as exc:
             self.error = str(exc)
+            if self.stats and self.stats.get("interface") != self.cfg["interface"]:
+                self.stats = None
+        if self.view == "history":
+            self.history.reload(self.stats.get("traffic", {}) if self.stats else {})
         self.last_refresh = time.time()
         self._dirty = True
 
@@ -587,6 +608,11 @@ class App:
         self.init_colors()
         self.refresh()
         while self.running:
+            if time.monotonic() - self.last_live_poll >= 1:
+                self.live_rates.poll(self.cfg["interface"])
+                self.last_live_poll = time.monotonic()
+                if self.view in ("dash", "history"):
+                    self._dirty = True
             if (time.time() - self.last_refresh) >= float(self.cfg["refresh_seconds"]):
                 self.refresh()
             cur_min = time.strftime("%H:%M")
@@ -611,6 +637,8 @@ class App:
             self.draw_help(h, w)
         elif self.view == "wizard":
             self.draw_wizard(h, w)
+        elif self.view == "history":
+            self.history.draw(h, w)
         else:
             self.draw_dashboard(h, w)
             self.draw_footer(h, w)
@@ -646,6 +674,7 @@ class App:
 
     def draw_dashboard(self, h, w):
         y = self.draw_header(w)
+        self.put(y, 2, f"实时：↓ {format_rate(self.live_rates.rx)}  ↑ {format_rate(self.live_rates.tx)}  · [g] 历史图表", curses.A_DIM)
         if self.stats is None:
             self.put(y + 1, 2, f"暂无数据：{self.error}", curses.color_pair(C_BAD))
             return
@@ -1056,6 +1085,7 @@ class App:
         lines = [
             ("快捷键", ""),
             ("  s", "打开设置：流量限额、提醒阈值和声音"),
+            ("  g", "历史图表：按月/周/日查看上下行流量和速率"),
             ("  w", "重新运行首次设置向导"),
             ("  d", "启动或停止 vnstat 服务"),
             ("  t", "试听提示音"),
@@ -1093,7 +1123,7 @@ class App:
     def draw_footer(self, h, w):
         active, _ = daemon_status()
         daemon_key = "[d] 停止服务" if active == "active" else "[d] 启动服务"
-        keys = (f" [s] 设置 │ [w] 向导 │ {daemon_key} │ [t] 试听 │ "
+        keys = (f" [g] 图表 │ [s] 设置 │ [w] 向导 │ {daemon_key} │ [t] 试听 │ "
                 f"[r] 刷新 │ [?] 帮助 │ [q] 退出 ")
         self.put(h - 1, 0, pad_text(keys, w - 1), curses.A_REVERSE)
         if self.message:
@@ -1111,8 +1141,15 @@ class App:
         if self.view == "wizard":
             self.handle_wizard_key(ch)
             return
+        if self.view == "history":
+            self.history.handle_key(ch)
+            return
         if ch == ord("q"):
             self.running = False
+        elif ch == ord("g"):
+            self.view = "history"
+            self.history.reload(self.stats.get("traffic", {}) if self.stats and self.stats.get("interface") == self.cfg["interface"] else {})
+            self.history.select_anchor()
         elif ch == ord("w"):
             self.start_wizard()
         elif ch == ord("?"):
@@ -1275,7 +1312,21 @@ def main(argv=None) -> int:
     options.add_argument("--interface", metavar="网卡", help="指定要监控的网卡")
     options.add_argument("--generate-sound", action="store_true",
                     help="生成或重新生成 tock.wav 后退出")
+    options.add_argument("--history", action="store_true", help="直接打开历史流量柱状图与速率折线图")
+    options.add_argument("--period", choices=("month", "week", "day"), help="历史统计范围：month 月 / week 周 / day 日")
+    options.add_argument("--date", metavar="日期", help="跳转到 YYYY-MM-DD（月份可用 YYYY-MM，周可用 YYYY-Www）")
     args = ap.parse_args(argv)
+    history_requested = args.history or args.period or args.date
+    anchor = date.today()
+    if args.date:
+        try:
+            anchor = parse_anchor(args.date, args.period or "month")
+            if not 1970 <= anchor.year <= 9998:
+                raise ValueError
+        except ValueError:
+            ap.error("日期无效，请使用 YYYY-MM-DD / YYYY-MM / YYYY-Www（1970–9998 年）")
+    if history_requested and (args.once or args.check or args.generate_sound):
+        ap.error("历史图表选项不能与 --once、--check 或 --generate-sound 同时使用")
 
     if not CONFIG_PATH.exists():
         base = dict(DEFAULT_CONFIG)
@@ -1291,7 +1342,7 @@ def main(argv=None) -> int:
         print(f"已生成 {SOUND_PATH}")
         return 0
 
-    if shutil.which("vnstat") is None:
+    if shutil.which("vnstat") is None and not (history_requested and HISTORY_PATH.exists()):
         print(f"{APP}：未安装 vnstat，请先安装并启动 vnstat 服务", file=sys.stderr)
         return 1
 
@@ -1310,7 +1361,11 @@ def main(argv=None) -> int:
 
     def _run(scr):
         app = App(scr, cfg)
-        if first_run:
+        if history_requested:
+            app.view = "history"
+            app.history.mode = args.period or "month"
+            app.history.anchor = anchor
+        elif first_run:
             app.start_wizard()
         app.run()
 

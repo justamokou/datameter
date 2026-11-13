@@ -4,3 +4,7 @@ tock.wav
 __pycache__/
 *.pyc
 *.pyo
+history.sqlite3
+history.sqlite3-journal
+history.sqlite3-wal
+history.sqlite3-shm

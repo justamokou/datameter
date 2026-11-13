@@ -229,16 +229,20 @@ class TerminalIntegrationTests(unittest.TestCase):
                 "    days = []\n"
                 "    for n in range(6, -1, -1):\n"
                 "        d = now - timedelta(days=n)\n"
-                "        days.append({'date': {'year': d.year, 'month': d.month, 'day': d.day}, 'rx': 1024**3, 'tx': 0})\n"
-                "    hour = dict(days[-1], time={'hour': now.hour})\n"
-                "    print(json.dumps({'interfaces': [{'name': 'eth0', 'traffic': {'day': days, 'hour': [hour]}}]}))\n",
+                "        days.append({'date': {'year': d.year, 'month': d.month, 'day': d.day}, 'rx': (n+1)*1024**3, 'tx': (7-n)*128*1024**2})\n"
+                "    def sample(d, rx, tx):\n"
+                "        return {'date': {'year': d.year, 'month': d.month, 'day': d.day}, 'time': {'hour': d.hour, 'minute': d.minute}, 'timestamp': int(d.timestamp()), 'rx': rx, 'tx': tx}\n"
+                "    hours = [sample(now.replace(minute=0, second=0, microsecond=0)-timedelta(hours=n), (n+1)*64*1024**2, (24-n)*1024**2) for n in range(23, -1, -1)]\n"
+                "    five = [sample(now.replace(minute=now.minute//5*5, second=0, microsecond=0)-timedelta(minutes=5*n), (n+1)*1024**2, (24-n)*1024**2) for n in range(23, -1, -1)]\n"
+                "    print(json.dumps({'interfaces': [{'name': 'eth0', 'updated': {'timestamp': int(now.timestamp())}, 'traffic': {'day': days, 'hour': hours, 'fiveminute': five}}]}))\n",
                 encoding="utf-8")
             for name in ("vnstat", "systemctl"):
                 executable = folder / name
                 executable.write_text("#!" + sys.executable + "\n" + helper.read_text(), encoding="utf-8")
                 executable.chmod(0o755)
             env = dict(os.environ, PATH=str(folder), TERM="xterm-256color", LC_ALL="C.UTF-8",
-                       DATAMETER_CONFIG=str(folder / "config.json"), DATAMETER_STATE=str(folder / "state.json"))
+                       DATAMETER_CONFIG=str(folder / "config.json"), DATAMETER_STATE=str(folder / "state.json"),
+                       DATAMETER_HISTORY=str(folder / "history.sqlite3"))
             config = dict(dm.DEFAULT_CONFIG, interface="eth0", setup_done=True,
                           notifications=False, sound_enabled=False)
             (folder / "config.json").write_text(json.dumps(config))
@@ -284,6 +288,12 @@ class TerminalIntegrationTests(unittest.TestCase):
                 print("\nLinux 终端预览：\n" + screen)
                 for key, label in ((b"s", "声音与通知"), (b"\x1b", "平均用量"),
                                    (b"?", "快捷键"), (b"x", "平均用量"),
+                                   (b"g", "流量柱状图"), (b"w", "周（周一至周日）视图"),
+                                   (b"d", "日视图"), (b"f", "每5分钟"),
+                                   (b"u", "bit/s"), (b"/", "跳转日期"),
+                                   (b"2024-02-29\n", "2024-02-29"),
+                                   (b"m", "月视图"), (b"\n", "日视图"),
+                                   (b"\x1b", "平均用量"),
                                    (b"w", "欢迎使用 datameter"), (b"\n", "←/→ 切换"),
                                    (b"\n", "套餐重置日"), (b"\n", "套餐流量额度"),
                                    (b"\n", "每日预算"), (b"\n", "提醒阈值"),
@@ -293,6 +303,11 @@ class TerminalIntegrationTests(unittest.TestCase):
                     raw.clear()
                     os.write(master, key)
                     read_until(label)
+                    if key == b"g":
+                        history_screen = preview.replay(raw.decode("utf-8"), 110, 40)
+                        for chart_label in ("流量柱状图", "速率折线图", "下载", "上传", "时段均速"):
+                            self.assertIn(chart_label, history_screen)
+                        print("\n历史图表终端预览：\n" + history_screen)
                 os.write(master, b"q")
                 process.wait(timeout=5)
                 self.assertEqual(process.returncode, 0)
