@@ -258,14 +258,17 @@ class TerminalIntegrationTests(unittest.TestCase):
 
             def read_until(label):
                 deadline = time.monotonic() + 8
+                found = False
                 while time.monotonic() < deadline:
-                    ready, _, _ = select.select([master], [], [], 0.1)
+                    ready, _, _ = select.select([master], [], [], 0.05 if found else 0.1)
                     if ready:
                         try:
                             raw.extend(os.read(master, 65536))
                         except OSError:
                             break
-                    if label.encode("utf-8") in raw:
+                        found = label.encode("utf-8") in raw
+                    elif found:
+                        # Drain the complete redraw, not just its first label.
                         return
                     if process.poll() is not None:
                         break
@@ -273,7 +276,12 @@ class TerminalIntegrationTests(unittest.TestCase):
 
             try:
                 read_until("平均用量")
-                print("\nLinux 终端预览：\n" + preview.replay(raw.decode("utf-8"), 110, 40))
+                screen = preview.replay(raw.decode("utf-8"), 110, 40)
+                for label in ("用量提醒", "近 7 天", "近 24 小时", "[q] 退出"):
+                    self.assertIn(label, screen)
+                for line in screen.splitlines():
+                    self.assertLessEqual(dm.display_width(line), 110)
+                print("\nLinux 终端预览：\n" + screen)
                 for key, label in ((b"s", "声音与通知"), (b"\x1b", "平均用量"),
                                    (b"?", "快捷键"), (b"x", "平均用量"),
                                    (b"w", "欢迎使用 datameter"), (b"\n", "←/→ 切换"),

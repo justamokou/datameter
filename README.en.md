@@ -2,9 +2,9 @@
 
 # datameter
 
-Terminal dashboard for [vnstat](https://humdi.net/vnstat/). 
-Simple TUI app to keep track of bandwidth usage - useful if you are on a metered mobile connection with usage limits. 
-Using wizard at laungh, fill your data plan details and usage alerts, then select the connection you want to keep track of. 
+Terminal dashboard for [vnstat](https://humdi.net/vnstat/).
+Simple TUI app to keep track of bandwidth usage - useful if you are on a metered mobile connection with usage limits.
+Using wizard at laungh, fill your data plan details and usage alerts, then select the connection you want to keep track of.
 
 ## Full disclaimer - 100% AI-generated
 
