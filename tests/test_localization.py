@@ -211,6 +211,7 @@ class TerminalIntegrationTests(unittest.TestCase):
         import fcntl
         import pty
         import select
+        import signal
         import struct
         import termios
         import preview
@@ -308,6 +309,27 @@ class TerminalIntegrationTests(unittest.TestCase):
                         for chart_label in ("流量柱状图", "速率折线图", "下载", "上传", "时段均速"):
                             self.assertIn(chart_label, history_screen)
                         print("\n历史图表终端预览：\n" + history_screen)
+                        for width, height in ((80, 24), (60, 20), (48, 18), (40, 14), (32, 12), (110, 40)):
+                            raw.clear()
+                            fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", height, width, 0, 0))
+                            process.send_signal(signal.SIGWINCH)
+                            read_until("流量柱状图" if width >= 64 else "流量(")
+                            resized = preview.replay(raw.decode("utf-8"), width, height)
+                            self.assertNotIn("需要至少", resized)
+                            self.assertIn("下载", resized)
+                            self.assertIn("上传", resized)
+                            self.assertNotIn("Traceback", resized)
+                            if height < 20:
+                                raw.clear()
+                                os.write(master, b"\t")
+                                read_until("速率(")
+                                resized = preview.replay(raw.decode("utf-8"), width, height)
+                                self.assertIn("速率(", resized)
+                                raw.clear()
+                                os.write(master, b"\t")
+                                read_until("流量(")
+                            if (width, height) in ((60, 20), (40, 14)):
+                                print("\n{}x{} 自适应终端预览：\n{}".format(width, height, resized))
                 os.write(master, b"q")
                 process.wait(timeout=5)
                 self.assertEqual(process.returncode, 0)

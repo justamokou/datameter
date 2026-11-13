@@ -275,6 +275,67 @@ class HistoryViewTests(unittest.TestCase):
         self.assertEqual(self.view.report["summary"]["rx"], 600)
         self.assertIn("归档不可用", self.view.warning)
 
+    def test_legends_follow_the_heading_instead_of_terminal_right_edge(self):
+        self.view.mode = "week"
+        self.view.reload()
+        for width in (80, 110, 132, 200):
+            with self.subTest(width=width):
+                calls = []
+                self.app.put = lambda y, x, text, attr=0: calls.append((y, x, text))
+                with patch.object(self.dm.curses, "color_pair", return_value=0):
+                    self.view.draw(40, width)
+                for name, download, upload in (("流量柱状图", "█ 下载", "▓ 上传"),
+                                                ("速率折线图", "● 下载", "◆ 上传")):
+                    heading = next(c for c in calls if c[2].startswith(name))
+                    rx = next(c for c in calls if c[2] == download)
+                    tx = next(c for c in calls if c[2] == upload)
+                    self.assertEqual(rx[:2], (heading[0], heading[1] + self.dm.display_width(heading[2]) + 2))
+                    self.assertEqual(tx[:2], (rx[0], rx[1] + self.dm.display_width(rx[2]) + 2))
+                    self.assertLess(rx[1], 55)
+
+    def test_small_terminals_show_charts_and_allow_switching_without_blocking(self):
+        for width, height in ((80, 24), (60, 20), (48, 18), (40, 14), (32, 12), (24, 10)):
+            for mode, fine in (("month", False), ("week", False), ("day", False), ("day", True)):
+                with self.subTest(width=width, height=height, mode=mode, fine=fine):
+                    self.view.mode, self.view.fine, self.view.chart_line = mode, fine, False
+                    self.view.reload()
+                    self.view.selected = len(self.view.report["buckets"]) - 1
+                    calls = []
+                    self.app.put = lambda y, x, text, attr=0: calls.append((y, x, text))
+                    with patch.object(self.dm.curses, "color_pair", return_value=0):
+                        self.view.draw(height, width)
+                        self.assertTrue(any(text.startswith("流量") and ("图" in text or "(" in text)
+                                            for y, x, text in calls))
+                        self.assertFalse(any("需要至少" in text for y, x, text in calls))
+                        self.assertTrue(any(text == "█ 下载" for y, x, text in calls))
+                        self.assertTrue(any(text == "▓ 上传" for y, x, text in calls))
+                        calls.clear()
+                        self.view.handle_key(9)
+                        self.view.draw(height, width)
+                        self.assertTrue(any(text.startswith("速率") for y, x, text in calls))
+                    for y, x, text in calls:
+                        self.assertTrue(0 <= y < height)
+                        self.assertLessEqual(x + self.dm.display_width(text), width)
+
+    def test_compact_statistics_can_cycle_through_peak_live_and_coverage(self):
+        calls = []
+        self.app.put = lambda y, x, text, attr=0: calls.append((y, x, text))
+        for expected in ("均速", "峰/", "实时", "会话峰", "流量覆盖", "合计"):
+            calls.clear()
+            with patch.object(self.dm.curses, "color_pair", return_value=0):
+                self.view.draw(18, 48)
+            self.assertTrue(any(text.startswith(expected) for y, x, text in calls), expected)
+            self.view.handle_key(ord("i"))
+
+    def test_extremely_tiny_terminal_remains_safe(self):
+        calls = []
+        self.app.put = lambda y, x, text, attr=0: calls.append((y, x, text))
+        with patch.object(self.dm.curses, "color_pair", return_value=0):
+            self.view.draw(5, 12)
+        for y, x, text in calls:
+            self.assertTrue(0 <= y < 5)
+            self.assertLessEqual(x + self.dm.display_width(text), 12)
+
     def test_interface_switch_does_not_reuse_old_live_traffic(self):
         self.app.cfg["interface"] = "wlan0"
         self.view.reload()

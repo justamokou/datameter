@@ -544,7 +544,7 @@ class App:
         self.live_rates = LiveRates()
         self.last_live_poll = 0.0
         self.history = HistoryView(self, HISTORY_PATH, fmt_bytes, pad_text,
-                                   (C_ACCENT, C_OK, C_WARN))
+                                   (C_ACCENT, C_OK, C_WARN), display_width, clip_text)
 
     # -- data ------------------------------------------------------------- #
 
