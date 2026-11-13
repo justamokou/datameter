@@ -287,15 +287,17 @@ class HistoryView:
         start = self.selected // capacity * capacity
         buckets = report["buckets"][start:start + capacity]
         gap = 1 if full else 0
-        status_y = h - 3
+        has_status = self.input_active or app.message or self.warning or app.error or summary["rx"] is None
+        status_y = h - 3 if has_status else h - 2
         detail_rows = 2 if h >= 18 else 1
         overheads = [self._chart_spec(w, buckets, line)[-1] + 2 + gap for line in (False, True)]
         plot_budget = status_y - chart_start - detail_rows - sum(overheads)
         dual = plot_budget >= 4
         if dual:
-            height = min(10, plot_budget // 2)
-            y = self.draw_chart(chart_start, w, height, buckets, page_start=start, gap=gap)
-            y = self.draw_chart(y, w, height, buckets, line=True, page_start=start, gap=gap)
+            bar_height = min(10, plot_budget // 2)
+            line_height = min(10, plot_budget - bar_height)
+            y = self.draw_chart(chart_start, w, bar_height, buckets, page_start=start, gap=gap)
+            y = self.draw_chart(y, w, line_height, buckets, line=True, page_start=start, gap=gap)
         else:
             overhead = overheads[int(self.chart_line)]
             if status_y - chart_start - detail_rows - overhead < 1:
@@ -319,8 +321,6 @@ class HistoryView:
             put(status_y, left, app.message or self.warning or f"vnstat 更新失败：{app.error}", self._attr(3))
         elif summary["rx"] is None:
             put(status_y, left, "此范围没有记录；已清理的明细无法恢复。", self._attr(3))
-        else:
-            put(status_y, left, "←/→选点 Enter下钻 f切换5分钟" if dual else "Tab切换流量/速率 i切换统计", curses.A_DIM)
         if w >= 80:
             footer = " m/w/d月周日 [ ]前后 /日期 n今天 u单位 r刷新 Esc返回 q退出 "
             hints = " ←/→选点 Enter下钻 f 5分钟 " + ("i详情" if not full else "") + (" Tab切图" if not dual else "")
@@ -329,6 +329,6 @@ class HistoryView:
             hints = " ←/→选点 Enter下钻 f 5分钟 i详情" + (" Tab切图" if not dual else "")
         else:
             footer = "m/w/d [] /日期 Esc q退出"
-            hints = "←→选点 Enter下钻 i详情" + (" Tab切图" if not dual else "")
+            hints = "←→选点 " + ("Tab切图 " if not dual else "") + "i详情 Enter下钻"
         put(h - 2, 0, hints, curses.A_DIM)
         put(h - 1, 0, self.pad(footer, w - 1), curses.A_REVERSE)
