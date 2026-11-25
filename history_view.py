@@ -383,7 +383,12 @@ class HistoryView:
             else:
                 put(y + height, bx, "─" * cell_width, curses.A_DIM)
             if page_start + index == self.selected:
-                put(y + height, center, "^", curses.A_BOLD | self._attr(1))
+                # Adjacent rx/tx bars (cell_width 2..4) meet at the boundary between
+                # center-1 and center, so "/\" points cleanly at their junction.
+                if 2 <= cell_width <= 4:
+                    put(y + height, center - 1, "/\\", curses.A_BOLD | self._attr(1))
+                else:
+                    put(y + height, center, "^", curses.A_BOLD | self._attr(1))
 
         labels = [self._bucket_axis_label(b, cell_width) for b in buckets]
         max_lab_w = max(self.text_width(lab) for lab in labels)

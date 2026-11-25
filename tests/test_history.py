@@ -380,22 +380,23 @@ class HistoryViewTests(unittest.TestCase):
                                 if (":" in a[2] or "周" in a[2]) and "│" not in a[2] and "│" not in b[2]:
                                     self.assertLess(a[1], b[0], (y, a, b))
 
-    def test_selected_pointer_is_single_cell_and_centered_above_label(self):
+    def test_selected_pointer_aligns_with_bar_pair_center(self):
         self.view.mode, self.view.fine = "day", False
         self.view.reload()
         self.view.selected = 19
-        calls = []
-        self.app.put = lambda y, x, text, attr=0: calls.append((y, x, text))
-        with patch.object(self.dm.curses, "color_pair", return_value=0):
-            self.view.draw(30, 90)
-        pointers = [(y, x, text) for y, x, text in calls if text == "^"]
-        labels = [(y, x, text) for y, x, text in calls if text == "19:00"]
-        self.assertEqual(len(pointers), 2)
-        self.assertEqual(len(labels), 2)
-        for (py, px, pch), (ly, lx, ltxt) in zip(pointers, labels):
-            self.assertEqual(self.dm.display_width(pch), 1)
-            self.assertEqual(py + 1, ly)
-            self.assertEqual(px, lx + len(ltxt) // 2)
+        for width, expected_ptr, ptr_offset in ((90, "/\\", -2), (135, "^", 0)):
+            with self.subTest(width=width):
+                calls = []
+                self.app.put = lambda y, x, text, attr=0: calls.append((y, x, text))
+                with patch.object(self.dm.curses, "color_pair", return_value=0):
+                    self.view.draw(30, width)
+                pointers = [(y, x, text) for y, x, text in calls if text == expected_ptr]
+                labels = [(y, x, text) for y, x, text in calls if text == "19:00"]
+                self.assertEqual(len(pointers), 2)
+                self.assertEqual(len(labels), 2)
+                for (py, px, pch), (ly, lx, ltxt) in zip(pointers, labels):
+                    self.assertEqual(py + 1, ly)
+                    self.assertEqual(px, lx + len(ltxt) // 2 + (ptr_offset // 2))
 
     def test_compact_statistics_can_cycle_through_peak_live_and_coverage(self):
         calls = []
