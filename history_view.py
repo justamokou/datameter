@@ -387,7 +387,8 @@ class HistoryView:
 
         labels = [self._bucket_axis_label(b, cell_width) for b in buckets]
         max_lab_w = max(self.text_width(lab) for lab in labels)
-        stride = max(1, math.ceil((max_lab_w + 1) / cell_width))
+        min_gap = 2 if max_lab_w > cell_width else 1
+        stride = max(1, math.ceil((max_lab_w + min_gap) / cell_width))
 
         def label_x(index, lab):
             center = plot_x + index * cell_width + cell_width // 2
@@ -397,14 +398,18 @@ class HistoryView:
         selected_label = labels[selected_index]
         selected_x = label_x(selected_index, selected_label)
         selected_w = self.text_width(selected_label)
+        next_free_x = plot_x
         for index, lab in enumerate(labels):
             selected = page_start + index == self.selected
             x = label_x(index, lab)
             lw = self.text_width(lab)
-            overlaps = x < selected_x + selected_w + 1 and x + lw + 1 > selected_x
-            if selected or (index % stride == 0 and not overlaps):
-                put(y + height + 1, x, lab,
-                    (curses.A_REVERSE | curses.A_BOLD) if selected else curses.A_DIM)
+            overlaps_sel = x < selected_x + selected_w + 1 and x + lw + 1 > selected_x
+            if selected:
+                put(y + height + 1, x, lab, curses.A_REVERSE | curses.A_BOLD)
+                next_free_x = max(next_free_x, x + lw + 1)
+            elif index % stride == 0 and x >= next_free_x and not overlaps_sel:
+                put(y + height + 1, x, lab, curses.A_DIM)
+                next_free_x = x + lw + 1
         return y + height + 2 + gap
 
     def _draw_inspector_card(self, y, left, width, current, total_bytes, total_count):

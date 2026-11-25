@@ -351,6 +351,31 @@ class HistoryViewTests(unittest.TestCase):
                 self.view.handle_key(ord("t"))
                 self.assertFalse(self.view.show_table)
 
+    def test_xaxis_labels_never_collide_across_modes_and_widths(self):
+        for mode, fine in (("month", False), ("week", False), ("day", False), ("day", True)):
+            self.view.mode, self.view.fine = mode, fine
+            self.view.reload()
+            last_idx = len(self.view.report["buckets"]) - 1
+            for width, height in ((110, 40), (98, 24), (80, 24), (60, 20), (48, 18)):
+                for sel in (0, 1, last_idx // 2, last_idx):
+                    with self.subTest(mode=mode, fine=fine, width=width, sel=sel):
+                        self.view.selected = sel
+                        calls = []
+                        self.app.put = lambda y, x, text, attr=0: calls.append((y, x, text))
+                        with patch.object(self.dm.curses, "color_pair", return_value=0):
+                            self.view.draw(height, width)
+                        by_row = {}
+                        for y, x, text in calls:
+                            by_row.setdefault(y, []).append((x, x + self.dm.display_width(text), text))
+                        for y, spans in by_row.items():
+                            if any(t.startswith("╭") or t == "└" for _, _, t in spans):
+                                continue
+                            spans.sort()
+                            for a, b in zip(spans, spans[1:]):
+                                self.assertLessEqual(a[1], b[0], (y, a, b))
+                                if (":" in a[2] or "周" in a[2]) and "│" not in a[2] and "│" not in b[2]:
+                                    self.assertLess(a[1], b[0], (y, a, b))
+
     def test_compact_statistics_can_cycle_through_peak_live_and_coverage(self):
         calls = []
         self.app.put = lambda y, x, text, attr=0: calls.append((y, x, text))
