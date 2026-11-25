@@ -39,6 +39,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from history_view import HistoryView
+from terminal_charts import bar_cells
 from traffic_history import HistoryStore, LiveRates, format_rate, parse_anchor
 
 APP = "datameter"
@@ -750,6 +751,30 @@ class App:
         if self.alerts and y < h - 2:
             self.put(y, 2, "• " + self.alerts[0], curses.color_pair(C_WARN))
 
+    def _draw_dash_bars(self, y, vals, labels, height, barw, colw, x0, mx, div,
+                        attr_for, label_step=1):
+        plot_w = len(vals) * colw
+        cols_by_row = [{} for _ in range(height)]
+        for ci, v in enumerate(vals):
+            attr = attr_for(v)
+            for row, ch in bar_cells(v, mx, height).items():
+                cols_by_row[row][ci] = (ch * barw, attr)
+        grid_rows = {0, height // 2} if height >= 3 else {0}
+        for row in range(height):
+            level = height - row
+            self.put(y + row, 2, f"{mx * level / height / div:>7.1f}", curses.A_DIM)
+            self.put(y + row, 10, "│", curses.A_DIM)
+            if row in grid_rows:
+                self.put(y + row, x0, "┄" * plot_w, curses.A_DIM)
+            for ci, (bar_str, attr) in cols_by_row[row].items():
+                self.put(y + row, x0 + ci * colw, bar_str, attr)
+        yr = y + height
+        self.put(yr, 10, "└" + "─" * plot_w, curses.A_DIM)
+        for ci, lab in enumerate(labels):
+            if ci % label_step == 0 or ci == len(labels) - 1:
+                self.put(yr + 1, x0 + ci * colw, pad_text(lab, barw, center=True), curses.A_DIM)
+        return yr + 2
+
     def draw_days_chart(self, y, w, s, daily_limit):
         vals, labels = s["day_values"], s["day_labels"]
         if not vals:
@@ -759,25 +784,10 @@ class App:
         title = f"近 {len(vals)} 天 ({unit})"
         self.put(y, 2, title, curses.A_BOLD | curses.color_pair(C_ACCENT))
         self.put(y, 2 + display_width(title) + 3, f"峰值 {mx / div:.1f} {unit}", curses.A_DIM)
-        y += 1
-        height = 5
-        barw = 5
-        colw = barw + 2
-        x0 = 11
-        for row in range(height):
-            level = height - row
-            self.put(y + row, 2, f"{mx * level / height / div:>7.1f}", curses.A_DIM)
-            self.put(y + row, 10, "│", curses.A_DIM)
-            for ci, v in enumerate(vals):
-                bh = int(round(v / mx * height + 1e-9))
-                if level <= bh:
-                    attr = curses.color_pair(C_BAD) if daily_limit and v > daily_limit else curses.color_pair(C_OK)
-                    self.put(y + row, x0 + ci * colw, "█" * barw, attr | curses.A_BOLD)
-        yr = y + height
-        self.put(yr, 10, "└" + "─" * (len(vals) * colw), curses.A_DIM)
-        for ci, lab in enumerate(labels):
-            self.put(yr + 1, x0 + ci * colw, pad_text(lab, barw, center=True), curses.A_DIM)
-        return yr + 2
+        return self._draw_dash_bars(
+            y + 1, vals, labels, height=5, barw=5, colw=7, x0=11, mx=mx, div=div,
+            attr_for=lambda v: (curses.color_pair(C_BAD) if daily_limit and v > daily_limit
+                                else curses.color_pair(C_OK)) | curses.A_BOLD)
 
     def draw_hours_chart(self, y, w, s):
         vals, labels = s["hour_values"], s["hour_labels"]
@@ -788,26 +798,10 @@ class App:
         div, unit = axis_unit(mx)
         self.put(y, 2, "近 24 小时", curses.A_BOLD | curses.color_pair(C_ACCENT))
         self.put(y, 24, f"峰值 {mx / div:.1f} {unit}", curses.A_DIM)
-        y += 1
-        height = 4
-        barw = 2
-        colw = barw + 1
-        x0 = 11
-        for row in range(height):
-            level = height - row
-            self.put(y + row, 2, f"{mx * level / height / div:>7.1f}", curses.A_DIM)
-            self.put(y + row, 10, "│", curses.A_DIM)
-            for ci, v in enumerate(vals):
-                bh = int(round(v / mx * height + 1e-9))
-                if level <= bh:
-                    self.put(y + row, x0 + ci * colw, "█" * barw,
-                             curses.color_pair(C_ACCENT) | curses.A_BOLD)
-        yr = y + height
-        self.put(yr, 10, "└" + "─" * (len(vals) * colw), curses.A_DIM)
-        for ci, lab in enumerate(labels):
-            if ci % 3 == 0 or ci == len(labels) - 1:
-                self.put(yr + 1, x0 + ci * colw, lab.center(barw), curses.A_DIM)
-        return yr + 2
+        return self._draw_dash_bars(
+            y + 1, vals, labels, height=4, barw=2, colw=3, x0=11, mx=mx, div=div,
+            attr_for=lambda v: curses.color_pair(C_ACCENT) | curses.A_BOLD,
+            label_step=3)
 
     # -- first-run wizard -------------------------------------------------- #
 

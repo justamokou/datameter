@@ -13,7 +13,7 @@ from unittest.mock import patch
 from traffic_history import (HistoryStore, LiveRates, build_report, format_rate,
                              midnight, normalize_snapshot, parse_anchor,
                              period_bounds, shift_month)
-from terminal_charts import line_grid
+from terminal_charts import bar_cells, braille_line_grid, line_grid
 
 
 def entry(day=13, hour=0, minute=0, rx=600, tx=300):
@@ -195,6 +195,19 @@ class LiveAndChartTests(unittest.TestCase):
         crossed = line_grid([0, 5], [5, 0], 3, 5, 5)
         self.assertTrue(any(series == 3 for char, series in crossed.values()))
 
+    def test_braille_line_and_eighth_block_bars(self):
+        connected = braille_line_grid([0, 5, 10], [None, None, None], 3, 5, 10)
+        self.assertTrue(any(x == 3 for y, x in connected))
+        self.assertTrue(all("\u2800" <= ch <= "\u28ff" for ch, _ in connected.values()))
+        missing = braille_line_grid([0, None, 10], [None, None, None], 3, 5, 10)
+        self.assertEqual({x for y, x in missing}, {1, 7})
+        crossed = braille_line_grid([0, 5], [5, 0], 3, 5, 5)
+        self.assertTrue(any(series == 3 for _, series in crossed.values()))
+        self.assertEqual(bar_cells(None, 10, 4), {})
+        self.assertEqual(bar_cells(0, 10, 4), {})
+        self.assertEqual(bar_cells(0.1, 100, 4), {3: "▁"})
+        self.assertEqual(bar_cells(100, 100, 4), {0: "█", 1: "█", 2: "█", 3: "█"})
+
 
 class HistoryViewTests(unittest.TestCase):
     def setUp(self):
@@ -284,7 +297,7 @@ class HistoryViewTests(unittest.TestCase):
                 self.app.put = lambda y, x, text, attr=0: calls.append((y, x, text))
                 with patch.object(self.dm.curses, "color_pair", return_value=0):
                     self.view.draw(40, width)
-                for name, download, upload in (("流量柱状图", "█ 下载", "▓ 上传"),
+                for name, download, upload in (("流量柱状图", "↓█ 下载", "↑█ 上传"),
                                                 ("速率折线图", "● 下载", "◆ 上传")):
                     heading = next(c for c in calls if c[2].startswith(name))
                     rx = next(c for c in calls if c[2] == download)
@@ -298,6 +311,7 @@ class HistoryViewTests(unittest.TestCase):
             for mode, fine in (("month", False), ("week", False), ("day", False), ("day", True)):
                 with self.subTest(width=width, height=height, mode=mode, fine=fine):
                     self.view.mode, self.view.fine, self.view.chart_line = mode, fine, False
+                    self.view.show_table = False
                     self.view.reload()
                     self.view.selected = len(self.view.report["buckets"]) - 1
                     calls = []
@@ -307,8 +321,8 @@ class HistoryViewTests(unittest.TestCase):
                         self.assertTrue(any(text.startswith("流量") and ("图" in text or "(" in text)
                                             for y, x, text in calls))
                         self.assertFalse(any("需要至少" in text for y, x, text in calls))
-                        self.assertTrue(any(text == "█ 下载" for y, x, text in calls))
-                        self.assertTrue(any(text == "▓ 上传" for y, x, text in calls))
+                        self.assertTrue(any(text == "↓█ 下载" for y, x, text in calls))
+                        self.assertTrue(any(text == "↑█ 上传" for y, x, text in calls))
                         calls.clear()
                         self.view.handle_key(9)
                         self.view.draw(height, width)
@@ -316,6 +330,26 @@ class HistoryViewTests(unittest.TestCase):
                     for y, x, text in calls:
                         self.assertTrue(0 <= y < height)
                         self.assertLessEqual(x + self.dm.display_width(text), width)
+
+    def test_table_view_toggle_and_navigation_within_bounds(self):
+        self.view.mode = "month"
+        self.view.reload()
+        for width, height in ((110, 40), (80, 24), (48, 18)):
+            with self.subTest(width=width, height=height):
+                self.view.show_table = False
+                self.view.handle_key(ord("t"))
+                self.assertTrue(self.view.show_table)
+                self.view.handle_key(self.dm.curses.KEY_DOWN)
+                calls = []
+                self.app.put = lambda y, x, text, attr=0: calls.append((y, x, text))
+                with patch.object(self.dm.curses, "color_pair", return_value=0):
+                    self.view.draw(height, width)
+                self.assertTrue(any("时段明细表" in text for _, _, text in calls))
+                for y, x, text in calls:
+                    self.assertTrue(0 <= y < height, (y, text))
+                    self.assertLessEqual(x + self.dm.display_width(text), width, (x, text))
+                self.view.handle_key(ord("t"))
+                self.assertFalse(self.view.show_table)
 
     def test_compact_statistics_can_cycle_through_peak_live_and_coverage(self):
         calls = []
