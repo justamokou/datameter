@@ -234,7 +234,7 @@ python3 preview.py 's down right'  # 操作设置
 python3 preview.py '' 110 40       # 指定列数和行数
 ```
 
-`preview.py` 在伪终端中运行程序，将 ANSI 输出回放为纯文本；若安装了 `pyte`，会优先使用它，否则使用内置回放器。预览需要 Linux 和可用的 vnstat 数据；首次运行时显示设置向导，可先完成或跳过向导。自动化测试使用模拟 vnstat 数据，不读取真实流量，也不控制系统服务。GitHub Actions 在 Linux 上验证单元测试与真实 curses 伪终端交互。
+`preview.py` 在伪终端中运行程序，将 ANSI 输出回放为纯文本；若安装了 `pyte`，会优先使用它，否则使用内置回放器。预览需要 Linux 和可用的 vnstat 数据；首次运行时显示设置向导，可先完成或跳过向导。自动化测试使用模拟 vnstat 数据，不读取真实流量，也不控制系统服务。
 
 ## 上游声明
 
