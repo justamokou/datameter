@@ -62,6 +62,8 @@ def braille_line_grid(download: list, upload: list, cell_width: int,
                 error = dx + dy
                 while True:
                     _plot_braille_dot(masks, px, py, sub_w, sub_h)
+                    # Thicken stroke vertically by 1 sub-pixel so thin terminal fonts stay legible.
+                    _plot_braille_dot(masks, px, py + 1 if py + 1 < sub_h else py - 1, sub_w, sub_h)
                     if (px, py) == (sx, sy):
                         break
                     twice = 2 * error
@@ -72,13 +74,12 @@ def braille_line_grid(download: list, upload: list, cell_width: int,
                         error += dx
                         py += step_y
             else:
-                # Emphasize isolated points with a 2x2 sub-pixel dot so single samples stay visible.
                 _plot_braille_dot(masks, sx, sy, sub_w, sub_h)
+                _plot_braille_dot(masks, sx, sy + 1 if sy + 1 < sub_h else sy - 1, sub_w, sub_h)
                 if not has_next:
                     nx = sx - 1 if (sx % 2) else sx + 1
                     ny = sy + 1 if sy + 1 < sub_h else sy - 1
                     _plot_braille_dot(masks, nx, sy, sub_w, sub_h)
-                    _plot_braille_dot(masks, sx, ny, sub_w, sub_h)
                     _plot_braille_dot(masks, nx, ny, sub_w, sub_h)
             previous = (sx, sy)
 

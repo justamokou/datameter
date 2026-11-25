@@ -191,6 +191,12 @@ class HistoryView:
             return
         self._put(y, left, "╰" + "─" * (width - 2) + "╯", curses.A_DIM)
 
+    def _items_width(self, items):
+        total = max(0, len(items) - 1) * 3
+        for spans in items:
+            total += sum(self.text_width(t) for t, _ in spans)
+        return total
+
     def _draw_box_row(self, y, left, width, items):
         """Render │-delimited styled segments inside a rounded card row."""
         if width < 6:
@@ -230,10 +236,14 @@ class HistoryView:
     def _tick_format(self, maximum, divisor):
         return "{:.0f}" if maximum / divisor >= 100 else "{:.1f}"
 
+    def _margin_for(self, w):
+        return 2 if w >= 102 else (1 if w >= 60 else 0)
+
     def _plot_layout(self, w, total_buckets, tick_w):
-        left = 2 if w >= 60 else 0
+        left = self._margin_for(w)
+        right_margin = max(1, left)
         plot_x = left + tick_w + 2
-        avail = max(3, w - plot_x - 1)
+        avail = max(3, w - plot_x - right_margin)
         if total_buckets * 3 <= avail:
             cell_width = min(8, avail // max(1, total_buckets))
             capacity = max(1, total_buckets)
@@ -264,8 +274,8 @@ class HistoryView:
         if w < 64:
             grain = "5分" if self.mode == "day" and self.fine else "时" if self.mode == "day" else "日"
             title = f"{'速率' if line else '流量'}({unit}/{grain}{page_info})"
-        legends = ("● 下载", "◆ 上传") if line else ("↓█ 下载", "↑█ 上传")
-        left = 1 if w < 64 else 2
+        legends = ("● 下载", "◆ 上传") if line else ("█ ↓下载", "█ ↑上传")
+        left = self._margin_for(w) if w >= 64 else 1
         legend_x = left + self.text_width(title) + 2
         rows = 1
         if legend_x + sum(self.text_width(t) for t in legends) + 2 > w - 1:
@@ -399,40 +409,39 @@ class HistoryView:
 
     def _draw_inspector_card(self, y, left, width, current, total_bytes, total_count):
         volume = lambda v: self.volume(v) if v is not None else "—"
-        compact = width < 98
-        fmt_v = self._compact_vol if compact else volume
         if current["rx"] is not None:
             tot = current["rx"] + current["tx"]
-            share = f"{tot / total_bytes * 100:.0f}%" if (compact and total_bytes) else (
-                f"{tot / total_bytes * 100:.1f}%" if total_bytes else "—")
-            rx_txt = f"{fmt_v(current['rx'])}({self._compact_rate(current['rx_rate'])})" if compact else (
-                f"{fmt_v(current['rx'])} ({self._compact_rate(current['rx_rate'])})")
-            tx_txt = f"{fmt_v(current['tx'])}({self._compact_rate(current['tx_rate'])})" if compact else (
-                f"{fmt_v(current['tx'])} ({self._compact_rate(current['tx_rate'])})")
-            tot_txt = f"{fmt_v(tot)}({share})" if compact else f"{fmt_v(tot)} ({share})"
-            dur_txt = f"{current['seconds'] / 60:.0f}分"
+            share_full = f"{tot / total_bytes * 100:.1f}%" if total_bytes else "—"
+            share_short = f"{tot / total_bytes * 100:.0f}%" if total_bytes else "—"
+            full_items = [
+                [("↓ ", self._attr(1) | curses.A_BOLD), ("下载 ", curses.A_DIM),
+                 (f"{volume(current['rx'])} ({self._compact_rate(current['rx_rate'])})", self._attr(1))],
+                [("↑ ", self._attr(2) | curses.A_BOLD), ("上传 ", curses.A_DIM),
+                 (f"{volume(current['tx'])} ({self._compact_rate(current['tx_rate'])})", self._attr(2))],
+                [("合计 ", curses.A_DIM), (f"{volume(tot)} ({share_full})", curses.A_BOLD)],
+                [("时段均速 ", curses.A_DIM), (f"{current['seconds'] / 60:.0f}分", 0)],
+            ]
+            compact_items = [
+                [("↓", self._attr(1) | curses.A_BOLD),
+                 (f"{self._compact_vol(current['rx'])}({self._compact_rate(current['rx_rate'])})", self._attr(1))],
+                [("↑", self._attr(2) | curses.A_BOLD),
+                 (f"{self._compact_vol(current['tx'])}({self._compact_rate(current['tx_rate'])})", self._attr(2))],
+                [("合", curses.A_DIM), (f"{self._compact_vol(tot)}({share_short})", curses.A_BOLD)],
+                [(f"{current['seconds'] / 60:.0f}分", curses.A_DIM)],
+            ]
         else:
             state = "未发生" if current["future"] else "无记录"
-            rx_txt = tx_txt = tot_txt = state
-            dur_txt = "0分"
+            full_items = compact_items = [
+                [("↓ ", self._attr(1) | curses.A_BOLD), (state, curses.A_DIM)],
+                [("↑ ", self._attr(2) | curses.A_BOLD), (state, curses.A_DIM)],
+                [("合计 ", curses.A_DIM), (state, curses.A_DIM)],
+                [("0分", curses.A_DIM)],
+            ]
         title = f"选中 {current['title']} [{self.selected + 1}/{total_count}]"
         hint = "[Enter]下钻 [t]明细表"
         self._draw_box_top(y, left, width, title, right_badge=hint)
-        if compact:
-            items = [
-                [("↓", self._attr(1) | curses.A_BOLD), (rx_txt, self._attr(1))],
-                [("↑", self._attr(2) | curses.A_BOLD), (tx_txt, self._attr(2))],
-                [("合", curses.A_DIM), (tot_txt, curses.A_BOLD)],
-                [(dur_txt, curses.A_DIM)],
-            ]
-        else:
-            items = [
-                [("↓ ", self._attr(1) | curses.A_BOLD), ("下载 ", curses.A_DIM), (rx_txt, self._attr(1))],
-                [("↑ ", self._attr(2) | curses.A_BOLD), ("上传 ", curses.A_DIM), (tx_txt, self._attr(2))],
-                [("合计 ", curses.A_DIM), (tot_txt, curses.A_BOLD)],
-                [("时段均速 ", curses.A_DIM), (dur_txt, 0)],
-            ]
-        self._draw_box_row(y + 1, left, width, items)
+        chosen = full_items if self._items_width(full_items) <= width - 4 else compact_items
+        self._draw_box_row(y + 1, left, width, chosen)
         self._draw_box_bottom(y + 2, left, width)
 
     def _share_bar(self, value, max_bucket, bar_len=8):
@@ -477,7 +486,7 @@ class HistoryView:
         slot_w = 10 if self.mode in ("month", "week") else 6
         vol_w = 9 if inner >= 76 else 8
         rate_w = 12 if wide_rates else 16
-        bar_w = 13 if show_bar else 0
+        bar_w = 12 if show_bar else 0
         dur_w = 6 if show_dur else 0
 
         # Column Header
@@ -513,7 +522,7 @@ class HistoryView:
             if bucket["rx"] is not None:
                 tot = bucket["rx"] + bucket["tx"]
                 share_pct = f"{tot / total_bytes * 100:4.1f}%" if total_bytes else "   — "
-                bar_txt = f"{self._share_bar(tot, max_bucket, 7)} {share_pct}"
+                bar_txt = f"{self._share_bar(tot, max_bucket, 5)} {share_pct}"
                 rx_s, tx_s, tot_s = vol(bucket["rx"]), vol(bucket["tx"]), vol(tot)
                 rx_r = format_rate(bucket["rx_rate"], self.bits) if wide_rates else self._compact_rate(bucket["rx_rate"])
                 tx_r = format_rate(bucket["tx_rate"], self.bits) if wide_rates else self._compact_rate(bucket["tx_rate"])
@@ -558,7 +567,7 @@ class HistoryView:
             self.select_anchor()
         app, put, report = self.app, self._put, self.report
         card_mode = h >= 22 and w >= 76
-        left = 2 if w >= 60 else 1
+        left = self._margin_for(w) if card_mode else (2 if w >= 60 else 1)
         card_w = max(10, w - left * 2)
         live = app.live_rates
         summary = report["summary"]
@@ -575,33 +584,44 @@ class HistoryView:
             period_badge = f"{mode_names[self.mode]} · {report['start']} ~ {report['end'] - timedelta(days=1)}"
             self._draw_box_top(0, left, card_w, f"datameter · 历史流量 · {app.cfg['interface']}",
                                right_badge=period_badge)
-            peak_lbl = f"峰值/{resolution} " if card_w >= 96 else "峰 "
-            if card_w < 88:
-                short_v = lambda v: self._compact_vol(v).replace("iB", "")
-                short_r = lambda v: self._compact_rate(v).replace("/s", "")
-                kpi_items = [
-                    [("合计 ", curses.A_DIM), (short_v(total), curses.A_BOLD),
-                     ("(↓", curses.A_DIM), (short_v(summary["rx"]), self._attr(1)),
-                     (" ↑", curses.A_DIM), (short_v(summary["tx"]), self._attr(2)), (")", curses.A_DIM)],
-                    [("均速 ", curses.A_DIM), ("↓" + short_r(summary["rx_rate"]), self._attr(1)),
-                     (" ↑" + short_r(summary["tx_rate"]), self._attr(2))],
-                    [(peak_lbl, curses.A_DIM),
-                     ("↓" + short_r(report["peak"]["rx"]), self._attr(1)),
-                     (" ↑" + short_r(report["peak"]["tx"]), self._attr(2))],
-                    [(f"{report['coverage']:.0%}", curses.A_BOLD)],
-                ]
-            else:
-                kpi_items = [
-                    [("合计 ", curses.A_DIM), (self._compact_vol(total), curses.A_BOLD),
-                     (" (↓", curses.A_DIM), (self._compact_vol(summary["rx"]), self._attr(1)),
-                     (" ↑", curses.A_DIM), (self._compact_vol(summary["tx"]), self._attr(2)), (")", curses.A_DIM)],
-                    [("均速 ", curses.A_DIM), ("↓" + self._compact_rate(summary["rx_rate"]), self._attr(1)),
-                     (" ↑" + self._compact_rate(summary["tx_rate"]), self._attr(2))],
-                    [(peak_lbl, curses.A_DIM),
-                     ("↓" + self._compact_rate(report["peak"]["rx"]), self._attr(1)),
-                     (" ↑" + self._compact_rate(report["peak"]["tx"]), self._attr(2))],
-                    [("覆盖 ", curses.A_DIM), (f"{report['coverage']:.0%}", curses.A_BOLD)],
-                ]
+            full_kpi = [
+                [("合计 ", curses.A_DIM), (self._compact_vol(total), curses.A_BOLD),
+                 (" (↓", curses.A_DIM), (self._compact_vol(summary["rx"]), self._attr(1)),
+                 (" ↑", curses.A_DIM), (self._compact_vol(summary["tx"]), self._attr(2)), (")", curses.A_DIM)],
+                [("均速 ", curses.A_DIM), ("↓" + self._compact_rate(summary["rx_rate"]), self._attr(1)),
+                 (" ↑" + self._compact_rate(summary["tx_rate"]), self._attr(2))],
+                [(f"峰值/{resolution} ", curses.A_DIM),
+                 ("↓" + self._compact_rate(report["peak"]["rx"]), self._attr(1)),
+                 (" ↑" + self._compact_rate(report["peak"]["tx"]), self._attr(2))],
+                [("覆盖 ", curses.A_DIM), (f"{report['coverage']:.0%}", curses.A_BOLD)],
+            ]
+            short_v = lambda v: self._compact_vol(v).replace("iB", "")
+            short_r = lambda v: self._compact_rate(v).replace("/s", "")
+            compact_kpi = [
+                [("合计 ", curses.A_DIM), (short_v(total), curses.A_BOLD),
+                 ("(↓", curses.A_DIM), (short_v(summary["rx"]), self._attr(1)),
+                 (" ↑", curses.A_DIM), (short_v(summary["tx"]), self._attr(2)), (")", curses.A_DIM)],
+                [("均速 ", curses.A_DIM), ("↓" + short_r(summary["rx_rate"]), self._attr(1)),
+                 (" ↑" + short_r(summary["tx_rate"]), self._attr(2))],
+                [(f"峰/{resolution} ", curses.A_DIM),
+                 ("↓" + short_r(report["peak"]["rx"]), self._attr(1)),
+                 (" ↑" + short_r(report["peak"]["tx"]), self._attr(2))],
+                [(f"{report['coverage']:.0%}", curses.A_BOLD)],
+            ]
+            tiny_kpi = [
+                [("合计 ", curses.A_DIM), (short_v(total), curses.A_BOLD),
+                 ("(↓", curses.A_DIM), (short_v(summary["rx"]), self._attr(1)),
+                 (" ↑", curses.A_DIM), (short_v(summary["tx"]), self._attr(2)), (")", curses.A_DIM)],
+                [("均 ", curses.A_DIM), ("↓" + short_r(summary["rx_rate"]), self._attr(1)),
+                 (" ↑" + short_r(summary["tx_rate"]), self._attr(2))],
+                [("峰 ", curses.A_DIM), ("↓" + short_r(report["peak"]["rx"]), self._attr(1)),
+                 (" ↑" + short_r(report["peak"]["tx"]), self._attr(2))],
+                [(f"{report['coverage']:.0%}", curses.A_BOLD)],
+            ]
+            inner_w = card_w - 4
+            kpi_items = (full_kpi if self._items_width(full_kpi) <= inner_w
+                         else compact_kpi if self._items_width(compact_kpi) <= inner_w
+                         else tiny_kpi)
             self._draw_box_row(1, left, card_w, kpi_items)
             expanded_card = h >= 28 and w >= 80
             if expanded_card:
@@ -667,7 +687,11 @@ class HistoryView:
             self._draw_table_panel(chart_start, left, card_w, table_h, report, mini=False)
         else:
             # Compute shared X-axis alignment across visible charts.
-            _, _, _, _, capacity = self._plot_layout(w, len(report["buckets"]), 5)
+            all_tick_w = max(
+                self._chart_spec(w, report["buckets"], False)[3],
+                self._chart_spec(w, report["buckets"], True)[3],
+            )
+            _, _, _, _, capacity = self._plot_layout(w, len(report["buckets"]), all_tick_w)
             start = self.selected // capacity * capacity
             buckets = report["buckets"][start:start + capacity]
             total_pages = math.ceil(len(report["buckets"]) / capacity)
@@ -732,12 +756,14 @@ class HistoryView:
         if w >= 80:
             footer = " m/w/d月周日 [ ]前后 /日期 n今天 u单位 t明细表 r刷新 Esc返回 q退出 "
             table_hint = "t返回图表" if self.show_table else "t明细表"
-            hints = f" ←/→选点 Enter下钻 f 5分钟 {table_hint}" + (" i详情" if not card_mode else "") + (" Tab切图" if not dual and not self.show_table else "")
+            hints = f"←/→选点 Enter下钻 f 5分钟 {table_hint}" + (" i详情" if not card_mode else "") + (" Tab切图" if not dual and not self.show_table else "")
+            put(h - 2, left, hints, curses.A_DIM)
         elif w >= 48:
             footer = " m/w/d范围 [ ]前后 /日期 t明细 Esc返回 q退出 "
             hints = " ←/→选点 Enter下钻 f 5分钟 i详情" + (" Tab切图" if not dual else "")
+            put(h - 2, 0, hints, curses.A_DIM)
         else:
             footer = "m/w/d [] /日期 Esc q退出"
             hints = "←→选点 " + ("Tab切图 " if not dual else "") + "i详情 Enter下钻"
-        put(h - 2, 0, hints, curses.A_DIM)
+            put(h - 2, 0, hints, curses.A_DIM)
         put(h - 1, 0, self.pad(footer, w - 1), curses.A_REVERSE)

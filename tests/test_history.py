@@ -297,7 +297,7 @@ class HistoryViewTests(unittest.TestCase):
                 self.app.put = lambda y, x, text, attr=0: calls.append((y, x, text))
                 with patch.object(self.dm.curses, "color_pair", return_value=0):
                     self.view.draw(40, width)
-                for name, download, upload in (("流量柱状图", "↓█ 下载", "↑█ 上传"),
+                for name, download, upload in (("流量柱状图", "█ ↓下载", "█ ↑上传"),
                                                 ("速率折线图", "● 下载", "◆ 上传")):
                     heading = next(c for c in calls if c[2].startswith(name))
                     rx = next(c for c in calls if c[2] == download)
@@ -321,8 +321,8 @@ class HistoryViewTests(unittest.TestCase):
                         self.assertTrue(any(text.startswith("流量") and ("图" in text or "(" in text)
                                             for y, x, text in calls))
                         self.assertFalse(any("需要至少" in text for y, x, text in calls))
-                        self.assertTrue(any(text == "↓█ 下载" for y, x, text in calls))
-                        self.assertTrue(any(text == "↑█ 上传" for y, x, text in calls))
+                        self.assertTrue(any(text == "█ ↓下载" for y, x, text in calls))
+                        self.assertTrue(any(text == "█ ↑上传" for y, x, text in calls))
                         calls.clear()
                         self.view.handle_key(9)
                         self.view.draw(height, width)
