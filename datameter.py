@@ -538,6 +538,8 @@ class App:
         self.view = "dash"          # dash | settings | help | wizard
         self._dirty = True
         self._last_min = None
+        self._daemon_state: tuple[str, str] | None = None
+        self._force_clear = False
         self.wiz_values: dict = {}
         self.wiz_steps: list = []
         self.wiz_step = 0
@@ -548,6 +550,11 @@ class App:
                                    (C_ACCENT, C_OK, C_WARN), display_width, clip_text)
 
     # -- data ------------------------------------------------------------- #
+
+    def _daemon_status(self) -> tuple[str, str]:
+        if self._daemon_state is None:
+            return daemon_status()
+        return self._daemon_state
 
     def refresh(self):
         try:
@@ -560,9 +567,10 @@ class App:
             self.error = str(exc)
             if self.stats and self.stats.get("interface") != self.cfg["interface"]:
                 self.stats = None
+        self._daemon_state = daemon_status()
         if self.view == "history":
             self.history.reload(self.stats.get("traffic", {}) if self.stats else {})
-        self.last_refresh = time.time()
+        self.last_refresh = time.monotonic()
         self._dirty = True
 
     # -- primitives ------------------------------------------------------- #
@@ -609,12 +617,25 @@ class App:
         self.init_colors()
         self.refresh()
         while self.running:
-            if time.monotonic() - self.last_live_poll >= 1:
-                self.live_rates.poll(self.cfg["interface"])
-                self.last_live_poll = time.monotonic()
-                if self.view in ("dash", "history"):
+            now = time.monotonic()
+            if now - self.last_live_poll >= 1:
+                prev_live = (
+                    self.live_rates.rx,
+                    self.live_rates.tx,
+                    self.live_rates.peak_rx,
+                    self.live_rates.peak_tx,
+                )
+                self.live_rates.poll(self.cfg["interface"], now=now)
+                self.last_live_poll = now
+                cur_live = (
+                    self.live_rates.rx,
+                    self.live_rates.tx,
+                    self.live_rates.peak_rx,
+                    self.live_rates.peak_tx,
+                )
+                if self.view in ("dash", "history") and cur_live != prev_live:
                     self._dirty = True
-            if (time.time() - self.last_refresh) >= float(self.cfg["refresh_seconds"]):
+            if now - self.last_refresh >= float(self.cfg["refresh_seconds"]):
                 self.refresh()
             cur_min = time.strftime("%H:%M")
             if self._dirty or cur_min != self._last_min:
@@ -626,11 +647,18 @@ class App:
             except curses.error:
                 ch = -1
             if ch != -1:
-                self.handle_key(ch)
+                if ch == getattr(curses, "KEY_RESIZE", None):
+                    self._force_clear = True
+                else:
+                    self.handle_key(ch)
                 self._dirty = True
 
     def draw(self):
-        self.stdscr.clear()
+        if self._force_clear:
+            self.stdscr.clear()
+            self._force_clear = False
+        else:
+            self.stdscr.erase()
         h, w = self.stdscr.getmaxyx()
         if self.view == "settings":
             self.draw_settings(h, w)
@@ -648,7 +676,7 @@ class App:
     # -- header ----------------------------------------------------------- #
 
     def draw_header(self, w, subtitle=""):
-        active, enabled = daemon_status()
+        active, enabled = self._daemon_status()
         if active == "active":
             dot, dot_attr = "●", curses.color_pair(C_OK) | curses.A_BOLD
             hint = "[d] 停止服务"
@@ -1115,7 +1143,7 @@ class App:
     # -- footer ----------------------------------------------------------- #
 
     def draw_footer(self, h, w):
-        active, _ = daemon_status()
+        active, _ = self._daemon_status()
         daemon_key = "[d] 停止服务" if active == "active" else "[d] 启动服务"
         keys = (f" [g] 图表 │ [s] 设置 │ [w] 向导 │ {daemon_key} │ [t] 试听 │ "
                 f"[r] 刷新 │ [?] 帮助 │ [q] 退出 ")
@@ -1193,14 +1221,15 @@ class App:
         elif ch in (10, 13, curses.KEY_ENTER):
             key = FIELD_ORDER[self.settings_sel]
             typ = FIELD_META[key][0]
-            if typ in ("str", "list"):
-                self.editing = True
-                if typ == "list":
-                    self.edit_buf = ",".join(str(x) for x in self.cfg.get(key, []))
-                else:
-                    self.edit_buf = str(self.cfg.get(key, ""))
-            else:
+            if typ == "bool":
                 self.adjust(1)
+            else:
+                self._begin_edit(key, typ)
+        elif (ord("0") <= ch <= ord("9")) or (ch == ord(".") and FIELD_META[FIELD_ORDER[self.settings_sel]][0] == "float"):
+            key = FIELD_ORDER[self.settings_sel]
+            if FIELD_META[key][0] in ("int", "float"):
+                self.editing = True
+                self.edit_buf = chr(ch)
         elif ch == ord("t"):
             self.message = "♪ 提示音试听"
             play_tock(3, float(self.cfg.get("sound_volume", 0.35)))
@@ -1208,6 +1237,28 @@ class App:
             save_config(self.cfg)
             self.message = "设置已保存"
             self.view = "dash"
+
+    def _begin_edit(self, key: str, typ: str):
+        val = self.cfg.get(key)
+        self.editing = True
+        if typ == "list":
+            self.edit_buf = ",".join(f"{float(x):g}" for x in val)
+        elif typ == "float":
+            self.edit_buf = f"{float(val):g}"
+        else:
+            self.edit_buf = str(val if val is not None else "")
+
+    @staticmethod
+    def _normalize_setting(key: str, value):
+        if key == "cycle_start_day":
+            return clamp(int(value), 1, 28)
+        if key == "refresh_seconds":
+            return clamp(int(value), 2, 3600)
+        if key == "sound_volume":
+            return round(clamp(float(value), 0.0, 1.0), 3)
+        if key in ("cycle_limit_gb", "daily_limit_gb"):
+            return max(0.0, float(value))
+        return value
 
     def adjust(self, delta):
         key = FIELD_ORDER[self.settings_sel]
@@ -1219,14 +1270,7 @@ class App:
         elif typ == "float":
             step = 0.05 if key == "sound_volume" else 1.0
             self.cfg[key] = round(float(self.cfg.get(key, 0)) + delta * step, 3)
-        if key == "cycle_start_day":
-            self.cfg[key] = clamp(int(self.cfg[key]), 1, 28)
-        if key == "refresh_seconds":
-            self.cfg[key] = clamp(int(self.cfg[key]), 2, 3600)
-        if key == "sound_volume":
-            self.cfg[key] = clamp(float(self.cfg[key]), 0.0, 1.0)
-        if key in ("cycle_limit_gb", "daily_limit_gb"):
-            self.cfg[key] = max(0.0, float(self.cfg[key]))
+        self.cfg[key] = self._normalize_setting(key, self.cfg[key])
         if typ in ("bool", "int", "float"):
             save_config(self.cfg)
 
@@ -1236,9 +1280,21 @@ class App:
         buf = self.edit_buf.strip()
         try:
             if typ == "str":
+                if not buf:
+                    raise ValueError
                 self.cfg[key] = buf
+            elif typ == "int":
+                self.cfg[key] = self._normalize_setting(key, int(buf))
+            elif typ == "float":
+                val = float(buf)
+                if not math.isfinite(val):
+                    raise ValueError
+                self.cfg[key] = self._normalize_setting(key, val)
             elif typ == "list":
-                self.cfg[key] = sorted({float(x) for x in buf.replace(" ", "").split(",") if x})
+                vals = sorted({float(x) for x in buf.replace(" ", "").split(",") if x})
+                if any(not math.isfinite(x) for x in vals):
+                    raise ValueError
+                self.cfg[key] = vals
         except ValueError:
             self.message = "输入值无效"
         else:

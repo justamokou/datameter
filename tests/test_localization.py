@@ -204,6 +204,106 @@ class LocalizationTests(unittest.TestCase):
                 if x == 4:
                     self.assertLessEqual(x + dm.display_width(text), 24)
 
+    def test_draw_uses_erase_and_cached_daemon_status(self):
+        events = []
+        screen = types.SimpleNamespace(
+            getmaxyx=lambda: (40, 110),
+            erase=lambda: events.append("erase"),
+            clear=lambda: events.append("clear"),
+            refresh=lambda: events.append("refresh"),
+            addstr=lambda *args: None,
+        )
+        app = dm.App(screen, self.cfg)
+        with patch.object(curses, "color_pair", return_value=0), \
+                patch.object(dm, "compute_stats", return_value=self.stats()), \
+                patch.object(dm, "check_alerts", return_value=[]), \
+                patch.object(dm, "daemon_status", return_value=("active", "enabled")) as ds:
+            app.refresh()
+            self.assertEqual(ds.call_count, 1)
+            app.draw()
+            app.draw()
+            self.assertEqual(ds.call_count, 1)
+            self.assertEqual(events, ["erase", "refresh", "erase", "refresh"])
+            events.clear()
+            app._force_clear = True
+            app.draw()
+            self.assertEqual(events, ["clear", "refresh"])
+            self.assertFalse(app._force_clear)
+
+    def test_run_skips_redraw_when_live_rates_unchanged(self):
+        draws = []
+        clock = [100.0]
+
+        class FakeScreen:
+            def keypad(self, _): pass
+            def timeout(self, _): pass
+            def getmaxyx(self): return (40, 110)
+            def erase(self): pass
+            def clear(self): pass
+            def refresh(self): pass
+            def addstr(self, *args): pass
+            def getch(self):
+                clock[0] += 0.6
+                if clock[0] >= 103.0:
+                    return ord("q")
+                return -1
+
+        app = dm.App(FakeScreen(), self.cfg)
+        with patch.object(curses, "curs_set", create=True), \
+                patch.object(curses, "start_color", create=True), \
+                patch.object(curses, "use_default_colors", create=True), \
+                patch.object(curses, "init_pair", create=True), \
+                patch.object(curses, "color_pair", return_value=0), \
+                patch.object(curses, "COLOR_GREEN", 2, create=True), \
+                patch.object(curses, "COLOR_YELLOW", 3, create=True), \
+                patch.object(curses, "COLOR_RED", 1, create=True), \
+                patch.object(curses, "COLOR_CYAN", 6, create=True), \
+                patch.object(curses, "COLOR_BLUE", 4, create=True), \
+                patch.object(dm.time, "monotonic", side_effect=lambda: clock[0]), \
+                patch.object(dm, "compute_stats", return_value=self.stats()), \
+                patch.object(dm, "check_alerts", return_value=[]), \
+                patch.object(dm, "daemon_status", return_value=("active", "enabled")), \
+                patch.object(app.live_rates, "poll"), \
+                patch.object(app, "draw", side_effect=lambda: draws.append(clock[0])):
+            app.run()
+        self.assertEqual(len(draws), 1)
+
+    def test_settings_allows_typing_int_and_float_values(self):
+        app = dm.App(None, dict(self.cfg))
+        app.view = "settings"
+        # Edit refresh_seconds via Enter -> Backspace -> type "30" -> Enter
+        app.settings_sel = dm.FIELD_ORDER.index("refresh_seconds")
+        app.handle_settings_key(10)
+        self.assertTrue(app.editing)
+        self.assertEqual(app.edit_buf, "10")
+        for _ in range(2):
+            app.handle_settings_key(curses.KEY_BACKSPACE)
+        for ch in "30":
+            app.handle_settings_key(ord(ch))
+        app.handle_settings_key(10)
+        self.assertFalse(app.editing)
+        self.assertEqual(app.cfg["refresh_seconds"], 30)
+        self.assertEqual(dm.load_config()["refresh_seconds"], 30)
+
+        # Direct digit entry on float field (cycle_limit_gb) + invalid input guard
+        app.settings_sel = dm.FIELD_ORDER.index("cycle_limit_gb")
+        for ch in "500.5":
+            app.handle_settings_key(ord(ch))
+        app.handle_settings_key(10)
+        self.assertEqual(app.cfg["cycle_limit_gb"], 500.5)
+
+        app.settings_sel = dm.FIELD_ORDER.index("refresh_seconds")
+        app.handle_settings_key(10)
+        app.edit_buf = "1"  # clamped to min 2
+        app.handle_settings_key(10)
+        self.assertEqual(app.cfg["refresh_seconds"], 2)
+
+        app.handle_settings_key(10)
+        app.edit_buf = "abc"
+        app.handle_settings_key(10)
+        self.assertEqual(app.message, "输入值无效")
+        self.assertEqual(app.cfg["refresh_seconds"], 2)
+
 
 @unittest.skipUnless(sys.platform == "linux", "Real curses requires Linux")
 class TerminalIntegrationTests(unittest.TestCase):
