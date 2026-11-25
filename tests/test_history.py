@@ -201,6 +201,10 @@ class LiveAndChartTests(unittest.TestCase):
         self.assertTrue(all("\u2800" <= ch <= "\u28ff" for ch, _ in connected.values()))
         missing = braille_line_grid([0, None, 10], [None, None, None], 3, 5, 10)
         self.assertEqual({x for y, x in missing}, {1, 7})
+        for cw in (2, 3, 4, 5):
+            # Isolated points should align on each bucket's center column.
+            pts = braille_line_grid([0, None, 10], [None, None, None], cw, 4, 10)
+            self.assertEqual({x for _, x in pts}, {cw // 2, 2 * cw + cw // 2})
         crossed = braille_line_grid([0, 5], [5, 0], 3, 5, 5)
         self.assertTrue(any(series == 3 for _, series in crossed.values()))
         self.assertEqual(bar_cells(None, 10, 4), {})
@@ -375,6 +379,23 @@ class HistoryViewTests(unittest.TestCase):
                                 self.assertLessEqual(a[1], b[0], (y, a, b))
                                 if (":" in a[2] or "周" in a[2]) and "│" not in a[2] and "│" not in b[2]:
                                     self.assertLess(a[1], b[0], (y, a, b))
+
+    def test_selected_pointer_is_single_cell_and_centered_above_label(self):
+        self.view.mode, self.view.fine = "day", False
+        self.view.reload()
+        self.view.selected = 19
+        calls = []
+        self.app.put = lambda y, x, text, attr=0: calls.append((y, x, text))
+        with patch.object(self.dm.curses, "color_pair", return_value=0):
+            self.view.draw(30, 90)
+        pointers = [(y, x, text) for y, x, text in calls if text == "^"]
+        labels = [(y, x, text) for y, x, text in calls if text == "19:00"]
+        self.assertEqual(len(pointers), 2)
+        self.assertEqual(len(labels), 2)
+        for (py, px, pch), (ly, lx, ltxt) in zip(pointers, labels):
+            self.assertEqual(self.dm.display_width(pch), 1)
+            self.assertEqual(py + 1, ly)
+            self.assertEqual(px, lx + len(ltxt) // 2)
 
     def test_compact_statistics_can_cycle_through_peak_live_and_coverage(self):
         calls = []

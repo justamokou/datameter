@@ -50,7 +50,7 @@ def braille_line_grid(download: list, upload: list, cell_width: int,
             if value is None:
                 previous = None
                 continue
-            sx = index * cell_width * 2 + cell_width
+            sx = index * cell_width * 2 + cell_width - (cell_width % 2)
             sy = sub_h - 1 - round(value / maximum * (sub_h - 1))
             sy = max(0, min(sub_h - 1, sy))
             has_next = index + 1 < len(values) and values[index + 1] is not None

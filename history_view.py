@@ -383,7 +383,7 @@ class HistoryView:
             else:
                 put(y + height, bx, "─" * cell_width, curses.A_DIM)
             if page_start + index == self.selected:
-                put(y + height, center, "▲", curses.A_BOLD | self._attr(1))
+                put(y + height, center, "^", curses.A_BOLD | self._attr(1))
 
         labels = [self._bucket_axis_label(b, cell_width) for b in buckets]
         max_lab_w = max(self.text_width(lab) for lab in labels)
